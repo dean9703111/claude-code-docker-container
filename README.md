@@ -30,6 +30,7 @@
 - [安裝 Plugins](#安裝-plugins)
 - [調整防火牆（開放更多網域）](#調整防火牆開放更多網域)
 - [加入 Python 環境](#加入-python-環境)
+- [YouTube 留言彙整工具](#youtube-留言彙整工具)
 - [常見問題](#常見問題)
 - [授權](#授權)
 
@@ -49,6 +50,15 @@
 │   ├── skills/             # Claude Code 讀取的 skills（多為指向 .agents/skills 的 symlink）
 │   └── settings.local.json # 專案層級的本機設定（權限白名單等）
 ├── skills-lock.json        # skills 的來源與內容雜湊鎖定檔
+├── package.json            # YouTube 留言彙整工具（見下方章節）
+├── server.js               # 網頁服務與 SSE 進度串流
+├── collector.js            # 彙整流程：列影片 → 抓留言 → 篩選 → 產 Markdown
+├── youtube.js              # 透過 youtubei.js 取得影片清單與留言
+├── filter.js               # 相對時間換算、日期與關鍵字篩選
+├── markdown.js             # Markdown 輸出
+├── public/index.html       # 前端頁面
+├── filter.test.js          # 純邏輯測試
+├── scenarios.test.js       # 實際連線 YouTube 的驗收測試
 ├── LICENSE
 └── README.md
 ```
@@ -254,6 +264,53 @@ pip install -r requirements.txt
 ```
 
 > 若需要更完整的 Python 工具鏈，也可考慮在 `devcontainer.json` 改用官方 [Python Dev Container Feature](https://github.com/devcontainers/features/tree/main/src/python) 或直接換成 Python 基底映像。
+
+---
+
+## YouTube 留言彙整工具
+
+放在本 repo 根目錄的小工具：貼上 **播放清單 / 單支影片 / 頻道** 網址，就把留言彙整成網頁，並可下載成 Markdown。
+取留言不經 YouTube Data API、不需要 API key，改用 npm 套件 [`youtubei.js`](https://www.npmjs.com/package/youtubei.js)（YouTube 網頁端內部使用的 InnerTube 介面）。
+
+### 啟動
+
+```bash
+npm install
+npm start           # 預設 http://localhost:3000，可用 PORT 環境變數調整
+```
+
+> 在本容器裡跑要先讓防火牆放行 `youtube.com` / `googleusercontent.com`（見[調整防火牆](#調整防火牆開放更多網域)），否則抓不到資料。
+
+### 使用方式
+
+1. **網址欄共用**：三種情境貼同一個欄位，程式自動判斷類型
+   - 單支影片：`https://www.youtube.com/watch?v=VIDEO_ID`、`https://youtu.be/VIDEO_ID`、`/shorts/VIDEO_ID`
+   - 播放清單：任何帶 `list=PL…` 的網址（例如 `watch?v=…&list=PL…`）→ 會彙整清單內所有影片
+   - 頻道：`https://www.youtube.com/@handle`、`/channel/UC…` → 會列出頻道的影片與 Shorts
+2. **篩選條件**（可留空）
+   - 起訖日期：只保留該區間內的留言
+   - 關鍵字：只保留內文含該關鍵字的留言（不分大小寫）
+   - 最多影片數：`0` 或空白代表全部；抓整個頻道時建議先設小一點
+3. **進度條**：顯示「第 N/總數 支影片」與目前已抓到的留言數
+4. **結果頁**：每支影片一張卡片，含縮圖、留言與回覆的階層，按「下載 Markdown」可各自存成一個 `.md`（也可一次下載全部）
+
+### 留言時間怎麼來的
+
+YouTube 網頁端只提供相對時間（例如 `3 months ago`），沒有絕對時間戳。工具會以「抓取當下」往回推算成估計日期再做區間篩選，因此日期是**近似值**，越舊的留言誤差越大（以月／年為單位）。
+
+### 篩選的階層規則
+
+篩選是逐則留言判斷。若主留言不符合、但底下有符合的回覆，該串會保留回覆，主留言則顯示為「主留言不符合篩選條件」的佔位列，不會輸出內容、也不計入留言數。
+
+### 測試
+
+```bash
+npm test              # 全部測試
+node --test filter.test.js      # 只跑不連網的純邏輯測試
+node --test scenarios.test.js   # 連線 YouTube 的驗收測試（約 2 分鐘）
+```
+
+`scenarios.test.js` 直接對真實網址驗收：播放清單影片數 ≥ 10、單支影片留言數 ≥ 400、頻道影片數 ≥ 40、日期區間內不得出現範圍外留言、關鍵字篩選後每則都含關鍵字。因為打的是真實網站，數字會隨影片更新而變動。
 
 ---
 
