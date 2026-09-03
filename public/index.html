@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YouTube 留言彙整工具</title>
+<style>
+  :root {
+    --bg: #f6f7f9;
+    --card: #ffffff;
+    --line: #e3e6ea;
+    --text: #1b1f23;
+    --muted: #6b7480;
+    --accent: #cc0000;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 15px/1.6 system-ui, "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 22px; margin: 0 0 4px; }
+  .sub { color: var(--muted); margin: 0 0 24px; font-size: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+  input {
+    width: 100%; padding: 9px 12px; border: 1px solid var(--line);
+    border-radius: 8px; font: inherit; background: #fff; color: inherit;
+  }
+  input:focus { outline: 2px solid #b9d4ff; border-color: #7aa7e9; }
+  .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 16px; }
+  .actions { margin-top: 18px; display: flex; gap: 10px; align-items: center; }
+  button {
+    font: inherit; padding: 9px 18px; border-radius: 8px; border: 1px solid transparent;
+    background: var(--accent); color: #fff; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.ghost { background: #fff; color: var(--text); border-color: var(--line); }
+  #progress { margin-top: 20px; display: none; }
+  .bar { height: 8px; background: #e9ecef; border-radius: 999px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s; }
+  .status { font-size: 13px; color: var(--muted); margin-top: 8px; }
+  .video { margin-top: 20px; }
+  .video-head { display: flex; gap: 14px; align-items: flex-start; }
+  .video-head img { width: 168px; height: 94px; object-fit: cover; border-radius: 8px; background: #ddd; }
+  .video-head h2 { font-size: 16px; margin: 0 0 4px; }
+  .video-head a { color: inherit; text-decoration: none; }
+  .video-head a:hover { text-decoration: underline; }
+  .meta { font-size: 13px; color: var(--muted); }
+  .comments { list-style: none; margin: 14px 0 0; padding: 0; }
+  .comments li { border-top: 1px solid var(--line); padding: 10px 0; }
+  .comments .replies { list-style: none; margin: 8px 0 0 0; padding: 0 0 0 18px; border-left: 2px solid var(--line); }
+  .comments .replies li { border-top: none; padding: 6px 0; }
+  .who { font-weight: 600; font-size: 14px; }
+  .who img { width: 22px; height: 22px; border-radius: 50%; vertical-align: -6px; margin-right: 6px; }
+  .badge { font-size: 11px; color: #fff; background: #888; border-radius: 4px; padding: 1px 6px; margin-left: 6px; }
+  .badge.owner { background: var(--accent); }
+  .text { white-space: pre-wrap; word-break: break-word; margin-top: 4px; }
+  .placeholder { color: var(--muted); font-style: italic; }
+  .err { color: var(--accent); }
+  .empty { color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>YouTube 留言彙整工具</h1>
+  <p class="sub">貼上播放清單、單支影片或頻道網址，彙整留言並匯出 Markdown。</p>
+
+  <div class="card">
+    <label for="url">YouTube 網址</label>
+    <input id="url" placeholder="https://www.youtube.com/watch?v=… 或 …&list=PL… 或 https://www.youtube.com/@頻道代號">
+    <div class="hint">支援：單支影片（watch / youtu.be / shorts）、播放清單（含 list= 參數）、頻道（@handle、/channel/UC…）</div>
+
+    <div class="row">
+      <div><label for="from">起始日期</label><input id="from" type="date"></div>
+      <div><label for="to">結束日期</label><input id="to" type="date"></div>
+      <div><label for="keyword">關鍵字</label><input id="keyword" placeholder="只保留含此字的留言"></div>
+      <div><label for="maxVideos">最多影片數</label><input id="maxVideos" type="number" min="0" placeholder="0＝全部"></div>
+    </div>
+
+    <div class="actions">
+      <button id="go">開始彙整</button>
+      <button id="stop" class="ghost" disabled>停止</button>
+      <button id="downloadAll" class="ghost" disabled>下載全部 Markdown</button>
+    </div>
+
+    <div id="progress">
+      <div class="bar"><i></i></div>
+      <div class="status" id="status"></div>
+    </div>
+  </div>
+
+  <div id="results"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const results = $('results');
+let source = null;
+const files = [];
+
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
+function commentHtml(c) {
+  if (c.placeholder) return '<div class="placeholder">（主留言不符合篩選條件，僅顯示以下回覆）</div>';
+  const badges = (c.isPinned ? '<span class="badge">置頂</span>' : '')
+    + (c.authorIsOwner ? '<span class="badge owner">作者</span>' : '');
+  const avatar = c.authorThumbnail ? `<img src="${esc(c.authorThumbnail)}" alt="">` : '';
+  return `<div class="who">${avatar}${esc(c.author)}${badges}</div>`
+    + `<div class="meta">${esc(c.publishedText)} · 👍 ${c.likeCount}</div>`
+    + `<div class="text">${esc(c.text)}</div>`;
+}
+
+function threadHtml(t) {
+  const replies = (t.replies || []).map((r) => `<li>${commentHtml(r)}</li>`).join('');
+  return `<li>${commentHtml(t)}${replies ? `<ul class="replies">${replies}</ul>` : ''}</li>`;
+}
+
+function download(name, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+function renderVideo(data) {
+  const box = document.createElement('div');
+  box.className = 'card video';
+  const list = data.threads.length
+    ? `<ul class="comments">${data.threads.map(threadHtml).join('')}</ul>`
+    : '<p class="empty">沒有符合條件的留言。</p>';
+  box.innerHTML = `
+    <div class="video-head">
+      <a href="${esc(data.video.url)}" target="_blank" rel="noreferrer"><img src="${esc(data.video.thumbnail)}" alt=""></a>
+      <div>
+        <h2><a href="${esc(data.video.url)}" target="_blank" rel="noreferrer">${esc(data.video.title)}</a></h2>
+        <div class="meta">${esc(data.video.channelName || '')} ${data.video.publishedText ? '· ' + esc(data.video.publishedText) : ''}</div>
+        <div class="meta">抓取 ${data.fetched} 則 · 符合條件 <strong>${data.count}</strong> 則</div>
+        <div style="margin-top:8px"><button class="ghost dl">下載 Markdown</button></div>
+      </div>
+    </div>
+    ${list}`;
+  box.querySelector('.dl').addEventListener('click', () => download(data.filename, data.markdown));
+  results.appendChild(box);
+}
+
+function setBusy(busy) {
+  $('go').disabled = busy;
+  $('stop').disabled = !busy;
+}
+
+$('stop').addEventListener('click', () => {
+  if (source) source.close();
+  source = null;
+  setBusy(false);
+  $('status').textContent = '已停止。';
+});
+
+$('downloadAll').addEventListener('click', () => {
+  files.forEach((f, i) => setTimeout(() => download(f.filename, f.markdown), i * 300));
+});
+
+$('go').addEventListener('click', () => {
+  const url = $('url').value.trim();
+  if (!url) { $('url').focus(); return; }
+  results.innerHTML = '';
+  files.length = 0;
+  $('downloadAll').disabled = true;
+  $('progress').style.display = 'block';
+  $('status').textContent = '解析網址中…';
+  document.querySelector('.bar > i').style.width = '0%';
+  setBusy(true);
+
+  const params = new URLSearchParams({
+    url,
+    from: $('from').value,
+    to: $('to').value,
+    keyword: $('keyword').value.trim(),
+    maxVideos: $('maxVideos').value || '0'
+  });
+  source = new EventSource('/api/collect?' + params);
+  source.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'target') $('status').textContent = `偵測到${ev.label}，取得影片清單中…`;
+    if (ev.type === 'listing') $('status').textContent = `取得影片清單中… 已找到 ${ev.found} 支`;
+    if (ev.type === 'videos') $('status').textContent = `共 ${ev.videos.length} 支影片，開始抓取留言…`;
+    if (ev.type === 'video-start') {
+      $('status').textContent = `(${ev.index + 1}/${ev.total}) 抓取中：${ev.video.title}`;
+      document.querySelector('.bar > i').style.width = `${(ev.index / ev.total) * 100}%`;
+    }
+    if (ev.type === 'comment-progress') {
+      $('status').textContent = `(${ev.index + 1}/${ev.total}) 已抓取 ${ev.fetched} 則留言…`;
+    }
+    if (ev.type === 'video-done') {
+      document.querySelector('.bar > i').style.width = `${((ev.index + 1) / ev.total) * 100}%`;
+      files.push({ filename: ev.filename, markdown: ev.markdown });
+      $('downloadAll').disabled = false;
+      renderVideo(ev);
+    }
+    if (ev.type === 'video-error') {
+      const p = document.createElement('p');
+      p.className = 'err';
+      p.textContent = `${ev.video.title}：${ev.message}`;
+      results.appendChild(p);
+    }
+    if (ev.type === 'error') {
+      $('status').innerHTML = `<span class="err">${esc(ev.message)}</span>`;
+    }
+    if (ev.type === 'done') {
+      $('status').textContent = `完成：${ev.videos} 支影片、${ev.comments} 則留言。`;
+      document.querySelector('.bar > i').style.width = '100%';
+      source.close();
+      source = null;
+      setBusy(false);
+    }
+  };
+  source.onerror = () => {
+    $('status').textContent = '連線中斷。';
+    if (source) source.close();
+    source = null;
+    setBusy(false);
+  };
+});
+</script>
+</body>
+</html>
