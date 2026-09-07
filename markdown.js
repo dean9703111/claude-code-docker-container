@@ -30,7 +30,7 @@ export function markdownFilename(video) {
 /**
  * @param {object} video 影片資訊
  * @param {Array} threads 已篩選的留言串
- * @param {{from?:string,to?:string,keyword?:string,total?:number}} filters
+ * @param {{keyword?:string,total?:number}} filters
  */
 export function renderMarkdown(video, threads, filters = {}) {
   const lines = [];
@@ -38,9 +38,7 @@ export function renderMarkdown(video, threads, filters = {}) {
   lines.push(`[![縮圖](${video.thumbnail})](${video.url})`, '');
   lines.push(`- 影片網址：${video.url}`);
   if (video.channelName) lines.push(`- 頻道：${video.channelName}`);
-  if (video.publishedText) lines.push(`- 發布時間：${video.publishedText}`);
-  const range = [filters.from || '不限', filters.to || '不限'].join(' ~ ');
-  lines.push(`- 日期範圍：${range}`);
+  if (video.publishedText) lines.push(`- 上傳時間：${video.publishedText}`);
   lines.push(`- 關鍵字：${filters.keyword ? `「${filters.keyword}」` : '無'}`);
   lines.push(`- 留言數（含回覆）：${filters.total ?? 0}`, '');
   lines.push('---', '');
