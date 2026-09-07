@@ -74,7 +74,7 @@
   .console input[type=date], .console input[type=number] { font-family: var(--mono); font-size: 13px; }
   .hint { font-family: var(--mono); font-size: 11px; color: #6d778a; margin: 8px 0 0; line-height: 1.7; }
 
-  .filters { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-top: 18px; }
+  .filters { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
   .run { display: flex; gap: 10px; margin-top: 18px; }
 
   button {
@@ -107,7 +107,13 @@
   /* ── 影片印樣格 ───────────────────────────────── */
   .sheet { margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--line-ink); }
   .sheet[hidden] { display: none; }
-  .sheet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; margin-bottom: 14px; }
+  .sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 10px; flex-wrap: wrap; }
+  .sheet-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .sheet .hint { margin: 0 0 14px; }
+  .pager { display: flex; align-items: center; gap: 8px; }
+  .pager[hidden] { display: none; }
+  .pager button { padding: 6px 12px; font-size: 13px; }
+  .pager-at { font-family: var(--mono); font-size: 12px; color: var(--on-ink-2); }
   .sheet-grid {
     display: grid; grid-template-columns: repeat(auto-fill, minmax(134px, 1fr));
     gap: 12px; max-height: 348px; overflow-y: auto; padding-right: 4px;
@@ -118,7 +124,14 @@
   }
   .tile:disabled { cursor: default; }
   .tile:hover:not(:disabled) { background: var(--ink-2); }
-  .tile.is-selected { background: var(--ink-3); }
+  .tile.is-selected, .tile.is-picked { background: var(--ink-3); }
+  .tile-check {
+    position: absolute; top: 5px; right: 5px; width: 17px; height: 17px; border-radius: 3px;
+    border: 1px solid var(--on-ink-2); background: rgba(22,26,36,.75);
+    display: grid; place-items: center; font-size: 11px; line-height: 1; color: transparent;
+  }
+  .tile.is-picked .tile-check { background: var(--ember); border-color: var(--ember); color: #fff; }
+  .tile.is-locked { opacity: .45; }
   .tile-frame { position: relative; display: block; aspect-ratio: 16 / 9; border-radius: 3px; overflow: hidden; background: var(--ink-2); }
   .tile-frame img { width: 100%; height: 100%; object-fit: cover; filter: grayscale(1) contrast(.85); opacity: .42; transition: filter .7s ease, opacity .7s ease; }
   .tile.is-done .tile-frame img, .tile.is-active .tile-frame img { filter: none; opacity: 1; }
@@ -132,6 +145,7 @@
     font-size: 12px; line-height: 1.5; color: var(--on-ink-2); margin-top: 7px;
   }
   .tile.is-selected .tile-title, .tile.is-active .tile-title { color: var(--on-ink); }
+  .tile-date { display: block; font-family: var(--mono); font-size: 10px; color: #6d778a; margin-top: 3px; }
 
   /* ── 閱讀區（亮區） ───────────────────────────── */
   .stage { max-width: 1120px; margin: 0 auto; padding: 30px 24px 80px; }
@@ -202,29 +216,26 @@
       <label class="field-label" for="url">YouTube 網址</label>
       <input id="url" name="url" autocomplete="off"
              placeholder="https://www.youtube.com/watch?v=… ／ …&list=PL… ／ https://www.youtube.com/@頻道">
-      <p class="hint">單支影片 watch?v= · youtu.be · /shorts　｜　播放清單 帶 list=PL…　｜　頻道 @handle · /channel/UC…</p>
+      <p class="hint">單支影片 watch?v= · youtu.be · /shorts　｜　播放清單 帶 list=PL…　｜　頻道 @handle · /channel/UC…<br>
+        日期篩的是<b>影片上傳時間</b>；列出後勾選要彙整的影片，單次最多 20 支。</p>
 
       <div class="filters">
         <div>
-          <label class="field-label" for="from">起始日期</label>
+          <label class="field-label" for="from">上傳起始日</label>
           <input id="from" type="date">
         </div>
         <div>
-          <label class="field-label" for="to">結束日期</label>
+          <label class="field-label" for="to">上傳結束日</label>
           <input id="to" type="date">
         </div>
         <div>
-          <label class="field-label" for="keyword">關鍵字</label>
+          <label class="field-label" for="keyword">留言關鍵字</label>
           <input id="keyword" placeholder="只留含這個字的留言">
-        </div>
-        <div>
-          <label class="field-label" for="maxVideos">最多影片數</label>
-          <input id="maxVideos" type="number" min="0" placeholder="0＝全部">
         </div>
       </div>
 
       <div class="run">
-        <button type="submit" class="btn-primary" id="go">開始彙整</button>
+        <button type="submit" class="btn-primary" id="go">列出影片</button>
         <button type="button" class="btn-line" id="stop" disabled>停止</button>
       </div>
     </form>
@@ -242,8 +253,18 @@
     <section class="sheet" id="sheet" hidden>
       <div class="sheet-head">
         <p class="label" id="sheetLabel">影片列表</p>
-        <button type="button" class="btn-line" id="downloadAll" disabled>下載全部 Markdown</button>
+        <div class="sheet-actions">
+          <div class="pager" id="pager" hidden>
+            <button type="button" class="btn-line" id="prevPage">上一頁</button>
+            <span class="pager-at" id="pageAt">1 / 1</span>
+            <button type="button" class="btn-line" id="nextPage">下一頁</button>
+          </div>
+          <button type="button" class="btn-line" id="backToList" hidden>重新選擇影片</button>
+          <button type="button" class="btn-primary" id="start" disabled>開始彙整</button>
+          <button type="button" class="btn-line" id="downloadAll" disabled>下載全部 Markdown</button>
+        </div>
       </div>
+      <p class="hint" id="pickHint"></p>
       <div class="sheet-grid" id="grid"></div>
     </section>
   </div>
@@ -275,12 +296,20 @@ const $ = (id) => document.getElementById(id);
 const deck = $('deck');
 const grid = $('grid');
 
+const PAGE_SIZE = 20;   // 清單每頁顯示幾支
+const MAX_PICK = 20;    // 單次可彙整的影片上限
+
 const state = {
-  videos: [],
-  results: new Map(),   // videoId -> 抓完的資料
-  tiles: new Map(),     // videoId -> tile 元素
-  selected: null,
+  videos: [],           // 列出的全部影片（已符合上傳日期範圍）
+  page: 0,
+  picked: new Set(),    // 勾選要彙整的影片 id
+  batch: [],            // 這一批送去彙整的影片
+  results: new Map(),   // videoId -> 抓完的資料（跨批次累積）
+  status: new Map(),    // videoId -> { cls, count }：離開頁面再回來也要還原標記
+  tiles: new Map(),     // videoId -> 目前畫面上的 tile 元素
+  viewing: null,        // 閱讀區正在看的影片
   pinned: false,        // 使用者手動點過影片後，就不再自動跟著跑
+  phase: 'idle',        // idle | listing | select | collect
   source: null
 };
 
@@ -299,40 +328,137 @@ function showScreen(url) {
 
 function setReadout(text) { $('readout').innerHTML = text; }
 
-/* ── 印樣格 ─────────────────────────────── */
-function buildGrid(videos) {
-  grid.innerHTML = '';
-  state.tiles.clear();
-  videos.forEach((video, i) => {
-    const tile = document.createElement('button');
-    tile.type = 'button';
-    tile.className = 'tile';
-    tile.disabled = true;
-    tile.title = video.title;
-    tile.setAttribute('aria-current', 'false');
-    tile.innerHTML = `
-      <span class="tile-frame">
-        <img src="${esc(video.thumbnail)}" alt="" loading="lazy">
-        <span class="tile-no">${i + 1}</span>
-        <span class="tile-count"></span>
-      </span>
-      <span class="tile-title">${esc(video.title)}</span>`;
-    tile.addEventListener('click', () => {
-      state.pinned = true;
-      select(video.id);
-    });
-    grid.appendChild(tile);
-    state.tiles.set(video.id, tile);
-  });
+/* ── 影片清單 ───────────────────────────── */
+function pageCount() { return Math.max(1, Math.ceil(state.videos.length / PAGE_SIZE)); }
+
+/** 自動勾選還沒彙整過的前 20 支，並跳到它們所在的頁 */
+function autoPick() {
+  state.picked.clear();
+  for (const video of state.videos) {
+    if (state.results.has(video.id)) continue;
+    if (state.picked.size >= MAX_PICK) break;
+    state.picked.add(video.id);
+  }
+  const first = state.videos.findIndex((v) => state.picked.has(v.id));
+  state.page = first < 0 ? 0 : Math.floor(first / PAGE_SIZE);
 }
 
-function markTile(videoId, cls) {
+function makeTile(video, number) {
+  const tile = document.createElement('button');
+  tile.type = 'button';
+  tile.className = 'tile';
+  tile.title = video.title;
+  tile.innerHTML = `
+    <span class="tile-frame">
+      <img src="${esc(video.thumbnail)}" alt="" loading="lazy">
+      <span class="tile-no">${number}</span>
+      <span class="tile-check" aria-hidden="true">✓</span>
+      <span class="tile-count"></span>
+    </span>
+    <span class="tile-title">${esc(video.title)}</span>
+    <span class="tile-date">${esc(video.publishedText)}</span>`;
+
+  if (state.phase === 'select') {
+    tile.setAttribute('role', 'checkbox');
+    tile.addEventListener('click', () => togglePick(video.id));
+  } else {
+    tile.querySelector('.tile-check').remove();
+    tile.disabled = !state.results.has(video.id);
+    tile.setAttribute('aria-current', 'false');
+    tile.addEventListener('click', () => { state.pinned = true; select(video.id); });
+  }
+
+  const status = state.status.get(video.id);
+  if (status) {
+    tile.classList.add(status.cls);
+    tile.querySelector('.tile-count').textContent = status.count;
+  }
+  return tile;
+}
+
+function renderGrid() {
+  const indexOf = new Map(state.videos.map((v, i) => [v.id, i]));
+  const list = state.phase === 'select'
+    ? state.videos.slice(state.page * PAGE_SIZE, state.page * PAGE_SIZE + PAGE_SIZE)
+    : state.batch;
+
+  grid.innerHTML = '';
+  state.tiles.clear();
+  for (const video of list) {
+    const tile = makeTile(video, (indexOf.get(video.id) ?? 0) + 1);
+    grid.appendChild(tile);
+    state.tiles.set(video.id, tile);
+  }
+  if (state.phase === 'select') syncPicks();
+  else if (state.viewing) select(state.viewing);
+}
+
+function renderSheet() {
+  const selecting = state.phase === 'select';
+  $('sheet').hidden = !state.videos.length;
+  $('pager').hidden = !selecting || pageCount() <= 1;
+  $('start').hidden = !selecting;
+  $('backToList').hidden = selecting || !state.videos.length;
+  $('pageAt').textContent = `${state.page + 1} / ${pageCount()}`;
+  $('prevPage').disabled = state.page === 0;
+  $('nextPage').disabled = state.page >= pageCount() - 1;
+  updateSheetHead();
+  renderGrid();
+}
+
+function updateSheetHead() {
+  if (state.phase === 'select') {
+    $('sheetLabel').textContent = `符合條件 ${state.videos.length} 支 — 勾選要彙整的影片`;
+    $('pickHint').textContent = state.videos.length > MAX_PICK
+      ? `單次最多 ${MAX_PICK} 支，已選 ${state.picked.size} 支；其餘請分批執行（彙整完可再回來勾下一批）。`
+      : `已選 ${state.picked.size} / ${state.videos.length} 支。`;
+  } else {
+    $('sheetLabel').textContent = `本批 ${state.batch.length} 支 — 點縮圖看該支的留言`;
+    $('pickHint').textContent = state.videos.length > state.batch.length
+      ? `清單共 ${state.videos.length} 支，已彙整 ${state.results.size} 支，按「重新選擇影片」挑下一批。`
+      : '';
+  }
+}
+
+function togglePick(id) {
+  if (state.picked.has(id)) state.picked.delete(id);
+  else if (state.picked.size >= MAX_PICK) return;
+  else state.picked.add(id);
+  syncPicks();
+}
+
+function syncPicks() {
+  const full = state.picked.size >= MAX_PICK;
+  for (const [id, tile] of state.tiles) {
+    const on = state.picked.has(id);
+    tile.classList.toggle('is-picked', on);
+    tile.classList.toggle('is-locked', !on && full);
+    tile.setAttribute('aria-checked', on ? 'true' : 'false');
+    tile.disabled = !on && full;
+  }
+  $('start').disabled = state.picked.size === 0;
+  $('start').textContent = `開始彙整（${state.picked.size} 支）`;
+  updateSheetHead();
+}
+
+function markTile(videoId, cls, count = '') {
+  state.status.set(videoId, { cls, count });
   const tile = state.tiles.get(videoId);
   if (!tile) return null;
   tile.classList.remove('is-active');
   tile.classList.add(cls);
+  tile.querySelector('.tile-count').textContent = count;
   return tile;
 }
+
+$('prevPage').addEventListener('click', () => { state.page = Math.max(0, state.page - 1); renderSheet(); });
+$('nextPage').addEventListener('click', () => { state.page = Math.min(pageCount() - 1, state.page + 1); renderSheet(); });
+
+$('backToList').addEventListener('click', () => {
+  state.phase = 'select';
+  autoPick();
+  renderSheet();
+});
 
 /* ── 閱讀區 ─────────────────────────────── */
 function commentHtml(c) {
@@ -358,7 +484,7 @@ function threadHtml(t) {
 function select(videoId) {
   const data = state.results.get(videoId);
   if (!data) return;
-  state.selected = videoId;
+  state.viewing = videoId;
 
   for (const [id, tile] of state.tiles) {
     const on = id === videoId;
@@ -388,7 +514,7 @@ function select(videoId) {
 }
 
 $('download').addEventListener('click', () => {
-  const data = state.results.get(state.selected);
+  const data = state.results.get(state.viewing);
   if (data && data.markdown) download(data.filename, data.markdown);
 });
 
@@ -407,11 +533,12 @@ $('downloadAll').addEventListener('click', () => {
 });
 
 /* ── 執行 ───────────────────────────────── */
-function setRunning(running) {
+function setRunning(running, label) {
   deck.classList.toggle('is-running', running);
   $('go').disabled = running;
-  $('go').textContent = running ? '彙整中…' : '開始彙整';
+  $('go').textContent = running ? (label || '執行中…') : '列出影片';
   $('stop').disabled = !running;
+  $('start').disabled = running || state.picked.size === 0;
 }
 
 function finish(label, text) {
@@ -421,48 +548,60 @@ function finish(label, text) {
   if (state.source) { state.source.close(); state.source = null; }
 }
 
+function openStream(path, params, onEvent) {
+  const source = new EventSource(`${path}?${params}`);
+  state.source = source;
+  source.onmessage = (e) => onEvent(JSON.parse(e.data));
+  source.onerror = () => {
+    finish('連線中斷', '請重新執行');
+    setReadout('連線中斷');
+  };
+}
+
+function resetMonitor(label) {
+  $('monitor').hidden = false;
+  $('monitorTitle').textContent = '—';
+  $('monitorStat').textContent = '';
+  $('monitorLabel').textContent = label;
+  $('trackBar').style.width = '0%';
+  $('screenImg').style.opacity = '0';
+}
+
 $('stop').addEventListener('click', () => {
-  finish('已停止', `完成 <b>${state.results.size}</b> / ${state.videos.length} 支影片`);
+  const done = state.phase === 'collect'
+    ? `完成 <b>${state.results.size}</b> / ${state.batch.length} 支影片`
+    : '已停止列出影片';
+  finish('已停止', done);
 });
 
+/* 第一階段：列出影片 */
 $('form').addEventListener('submit', (e) => {
   e.preventDefault();
   const url = $('url').value.trim();
   if (!url) { $('url').focus(); return; }
 
   state.videos = [];
+  state.page = 0;
+  state.picked.clear();
+  state.batch = [];
   state.results.clear();
+  state.status.clear();
   state.tiles.clear();
-  state.selected = null;
+  state.viewing = null;
   state.pinned = false;
+  state.phase = 'listing';
   grid.innerHTML = '';
   $('sheet').hidden = true;
   $('reader').hidden = true;
   $('standby').hidden = false;
   $('downloadAll').disabled = true;
-  $('monitor').hidden = false;
-  $('monitorTitle').textContent = '—';
-  $('monitorStat').textContent = '';
-  $('trackBar').style.width = '0%';
-  $('screenImg').style.opacity = '0';
-  $('monitorLabel').textContent = '解析網址';
-  setRunning(true);
+  resetMonitor('解析網址');
+  setRunning(true, '列出中…');
   setReadout('解析網址中');
 
-  const params = new URLSearchParams({
-    url,
-    from: $('from').value,
-    to: $('to').value,
-    keyword: $('keyword').value.trim(),
-    maxVideos: $('maxVideos').value || '0'
-  });
+  const params = new URLSearchParams({ url, from: $('from').value, to: $('to').value });
 
-  const source = new EventSource('/api/collect?' + params);
-  state.source = source;
-
-  source.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-
+  openStream('/api/videos', params, (ev) => {
     if (ev.type === 'target') {
       $('monitorLabel').textContent = `讀取${ev.label}`;
       setReadout(`${ev.label} · 取得影片清單`);
@@ -472,13 +611,55 @@ $('form').addEventListener('submit', (e) => {
       $('monitorStat').innerHTML = `已找到 <b>${num(ev.found)}</b> 支影片`;
     }
 
-    if (ev.type === 'videos') {
-      state.videos = ev.videos;
-      buildGrid(ev.videos);
-      $('sheet').hidden = false;
-      $('sheetLabel').textContent = `影片列表 ${ev.videos.length} 支 — 點縮圖看該支的留言`;
+    if (ev.type === 'resolving') {
+      $('monitorLabel').textContent = '確認上傳日期';
+      $('monitorStat').innerHTML = `逐支確認精確上傳時間 <b>${num(ev.done)}</b> / ${num(ev.total)}`;
+      $('trackBar').style.width = `${ev.total ? (ev.done / ev.total) * 100 : 0}%`;
+      setReadout(`確認上傳日期 <b>${num(ev.done)}</b>/${num(ev.total)}`);
     }
 
+    if (ev.type === 'videos') {
+      state.videos = ev.videos;
+      state.phase = 'select';
+      autoPick();
+      renderSheet();
+      $('trackBar').style.width = '100%';
+      if (!ev.videos.length) {
+        finish('沒有符合的影片', `掃過 <b>${num(ev.scanned)}</b> 支，這段上傳期間沒有影片`);
+        setReadout('沒有符合的影片');
+        $('monitorTitle').textContent = '沒有符合的影片';
+        return;
+      }
+      finish('影片清單就緒', `符合 <b>${num(ev.videos.length)}</b> 支 · 單次上限 ${ev.max} 支`);
+      $('monitorTitle').textContent = '請勾選要彙整的影片';
+      setReadout(`符合 <b>${num(ev.videos.length)}</b> 支影片`);
+    }
+
+    if (ev.type === 'error') {
+      state.phase = 'idle';
+      finish('無法列出影片', esc(ev.message));
+      setReadout('停止');
+    }
+  });
+});
+
+/* 第二階段：彙整勾選的影片 */
+$('start').addEventListener('click', () => {
+  if (!state.picked.size) return;
+  state.batch = state.videos.filter((v) => state.picked.has(v.id));
+  state.phase = 'collect';
+  state.pinned = false;
+  renderSheet();
+  resetMonitor('準備中');
+  setRunning(true, '彙整中…');
+  setReadout('開始彙整');
+
+  const params = new URLSearchParams({
+    ids: state.batch.map((v) => v.id).join(','),
+    keyword: $('keyword').value.trim()
+  });
+
+  openStream('/api/collect', params, (ev) => {
     if (ev.type === 'video-start') {
       const tile = markTile(ev.video.id, 'is-active');
       if (tile) tile.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -496,23 +677,18 @@ $('form').addEventListener('submit', (e) => {
 
     if (ev.type === 'video-done') {
       state.results.set(ev.video.id, ev);
-      const tile = markTile(ev.video.id, 'is-done');
-      if (tile) {
-        tile.disabled = false;
-        tile.querySelector('.tile-count').textContent = num(ev.count);
-      }
+      const tile = markTile(ev.video.id, 'is-done', num(ev.count));
+      if (tile) tile.disabled = false;
       $('downloadAll').disabled = false;
       $('trackBar').style.width = `${((ev.index + 1) / ev.total) * 100}%`;
+      updateSheetHead();
       if (!state.pinned) select(ev.video.id);
     }
 
     if (ev.type === 'video-error') {
       state.results.set(ev.video.id, { video: ev.video, fetched: 0, count: 0, threads: [], error: ev.message });
-      const tile = markTile(ev.video.id, 'is-error');
-      if (tile) {
-        tile.disabled = false;
-        tile.querySelector('.tile-count').textContent = '—';
-      }
+      const tile = markTile(ev.video.id, 'is-error', '—');
+      if (tile) tile.disabled = false;
     }
 
     if (ev.type === 'error') {
@@ -525,13 +701,9 @@ $('form').addEventListener('submit', (e) => {
       $('monitorTitle').textContent = '彙整完成';
       $('trackBar').style.width = '100%';
       setReadout(`完成 · <b>${num(ev.comments)}</b> 則留言`);
+      updateSheetHead();
     }
-  };
-
-  source.onerror = () => {
-    finish('連線中斷', '請重新開始彙整');
-    setReadout('連線中斷');
-  };
+  });
 });
 </script>
 </body>
