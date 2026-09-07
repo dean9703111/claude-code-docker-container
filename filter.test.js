@@ -1,7 +1,7 @@
 // 純邏輯測試（不連網）
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { relativeToDate, filterThreads, countComments, flattenComments } from './filter.js';
+import { relativeToDate, relativeRange, rangeOverlaps, inDateRange, filterThreads, countComments, flattenComments } from './filter.js';
 import { parseTarget } from './youtube.js';
 import { renderMarkdown, markdownFilename } from './markdown.js';
 
@@ -13,6 +13,35 @@ test('relativeToDate 換算相對時間', () => {
   assert.equal(relativeToDate('1 year ago (edited)', NOW).toISOString().slice(0, 10), '2025-09-03');
   assert.equal(relativeToDate(''), null);
   assert.equal(relativeToDate('剛剛'), null);
+  // 影片清單用縮寫："mo" 是月、"m" 是分鐘
+  assert.equal(relativeToDate('3d ago', NOW).toISOString().slice(0, 10), '2026-08-31');
+  assert.equal(relativeToDate('2mo ago', NOW).toISOString().slice(0, 10), '2026-07-03');
+  assert.equal(relativeToDate('2m ago', NOW).toISOString(), '2026-09-02T23:58:00.000Z');
+});
+
+test('relativeRange 換算成上傳時間的可能區間', () => {
+  // "1mo ago" 實際落在 1～2 個月前
+  const r = relativeRange('1mo ago', NOW);
+  assert.equal(r.latest.toISOString().slice(0, 10), '2026-08-03');
+  assert.equal(r.earliest.toISOString().slice(0, 10), '2026-07-03');
+  assert.equal(relativeRange('3d ago', NOW).earliest.toISOString().slice(0, 10), '2026-08-30');
+  // 頻道 Shorts 沒有時間欄位
+  assert.equal(relativeRange(''), null);
+});
+
+test('rangeOverlaps 粗篩影片，時間未知一律當候選', () => {
+  const r = relativeRange('1mo ago', NOW);
+  assert.equal(rangeOverlaps(r, '2026-08-01', '2026-08-31'), true);
+  assert.equal(rangeOverlaps(r, '2026-09-01', ''), false);   // 可能區間整段都早於起始日
+  assert.equal(rangeOverlaps(r, '', '2026-06-30'), false);   // 可能區間整段都晚於結束日
+  assert.equal(rangeOverlaps(null, '2026-01-01', '2026-01-02'), true);
+});
+
+test('inDateRange 用精確上傳時間做最終判斷', () => {
+  assert.equal(inDateRange('2026-08-15T10:00:00Z', '2026-08-01', '2026-08-31'), true);
+  assert.equal(inDateRange('2026-07-25T10:00:00Z', '2026-08-01', ''), false);
+  assert.equal(inDateRange('2026-09-15T10:00:00Z', '', '2026-08-31'), false);
+  assert.equal(inDateRange(null, '2026-08-01', ''), false);  // 取不到上傳時間就不納入
 });
 
 test('parseTarget 判斷網址類型', () => {
@@ -63,15 +92,10 @@ test('關鍵字篩選後每則留言都含關鍵字', () => {
   assert.equal(placeholder.text, '');
 });
 
-test('日期區間篩選後沒有區間外的留言', () => {
-  const { threads, total } = filterThreads(sample, { from: '2026-05-01', to: '2026-06-30' });
-  const flat = flattenComments(threads);
-  assert.equal(total, 2);
-  for (const c of flat) {
-    const at = new Date(c.publishedAt);
-    assert.ok(at >= new Date('2026-05-01T00:00:00'), c.publishedAt);
-    assert.ok(at <= new Date('2026-06-30T23:59:59.999'), c.publishedAt);
-  }
+test('沒有關鍵字時原樣保留所有留言', () => {
+  const { threads, total } = filterThreads(sample, {});
+  assert.equal(threads, sample);
+  assert.equal(total, 5);
 });
 
 test('Markdown 產出含縮圖、階層與檔名', () => {

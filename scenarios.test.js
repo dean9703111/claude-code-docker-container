@@ -2,7 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseTarget, listVideos } from './youtube.js';
-import { collect } from './collector.js';
+import { listTargetVideos, collectComments, MAX_VIDEOS } from './collector.js';
 import { flattenComments, dayStart, dayEnd } from './filter.js';
 
 const PLAYLIST_URL = 'https://www.youtube.com/watch?v=2hbYCe_E5aU&list=PLWWZkn1dW3eAvSZfJv0-02q27JIsfbN2f';
@@ -15,6 +15,9 @@ const MIN_CHANNEL_VIDEOS = 40;
 
 const report = [];
 let singleVideo = null;
+let channelTotal = 0;
+
+const isoDate = (d) => d.toLocaleDateString('en-CA');
 
 after(() => {
   console.log('\n===== 各情境實際數量 =====');
@@ -29,8 +32,11 @@ test('情境一：播放清單列出的影片數 ≥ 10', async () => {
 });
 
 test('情境一：播放清單可彙整留言並輸出各自的 Markdown', async () => {
-  const result = await collect(PLAYLIST_URL, { maxVideos: 2, maxCommentsPerVideo: 30 });
-  assert.equal(result.kind, 'playlist');
+  const listed = await listTargetVideos(PLAYLIST_URL);
+  assert.equal(listed.kind, 'playlist');
+  const ids = listed.videos.slice(0, 2).map((v) => v.id);
+
+  const result = await collectComments(ids, { maxCommentsPerVideo: 30 });
   assert.equal(result.results.length, 2);
   const names = result.results.map((r) => r.filename);
   assert.equal(new Set(names).size, 2, '不同影片要有不同檔名');
@@ -44,11 +50,13 @@ test('情境一：播放清單可彙整留言並輸出各自的 Markdown', async
 
 test('情境二：單支影片留言總數 ≥ 400', async () => {
   const events = [];
-  singleVideo = await collect(VIDEO_URL, {}, (e) => events.push(e));
+  const listed = await listTargetVideos(VIDEO_URL, {}, (e) => events.push(e));
+  assert.equal(listed.kind, 'video');
+
+  singleVideo = await collectComments(listed.videos.map((v) => v.id), {}, (e) => events.push(e));
   const first = singleVideo.results[0];
   report.push(`單支影片：${first.video.title}`);
   report.push(`單支影片：主留言 ${first.threads.length} 則、含回覆共 ${singleVideo.comments} 則`);
-  assert.equal(singleVideo.kind, 'video');
   assert.ok(singleVideo.comments >= MIN_VIDEO_COMMENTS, `只取得 ${singleVideo.comments} 則留言`);
   // 進度事件：知道正在抓哪支影片、抓到幾則
   assert.ok(events.some((e) => e.type === 'video-start' && e.video.title));
@@ -60,38 +68,39 @@ test('情境二：單支影片留言總數 ≥ 400', async () => {
 
 test('情境三：頻道列出的影片數 ≥ 40', async () => {
   const videos = await listVideos(parseTarget(CHANNEL_URL));
+  channelTotal = videos.length;
   report.push(`頻道：影片 ${videos.length} 支`);
   assert.ok(videos.length >= MIN_CHANNEL_VIDEOS, `只取得 ${videos.length} 支影片`);
   assert.equal(new Set(videos.map((v) => v.id)).size, videos.length, '影片不應重複');
 });
 
 test('情境三：頻道可彙整留言', async () => {
-  const result = await collect(CHANNEL_URL, { maxVideos: 1, maxCommentsPerVideo: 20 });
-  assert.equal(result.kind, 'channel');
+  const listed = await listTargetVideos(CHANNEL_URL);
+  assert.equal(listed.kind, 'channel');
+  const result = await collectComments([listed.videos[0].id], { maxCommentsPerVideo: 20 });
   assert.equal(result.results.length, 1);
   report.push(`頻道：第 1 支影片彙整 ${result.comments} 則留言`);
 });
 
-test('驗收④：設定時間範圍後，結果中沒有範圍外的留言', async () => {
-  assert.ok(singleVideo, '需先完成情境二');
-  const dates = flattenComments(singleVideo.results[0].threads)
-    .map((c) => new Date(c.publishedAt))
-    .sort((a, b) => a - b);
-  const iso = (d) => d.toLocaleDateString('en-CA');
-  const from = iso(dates[Math.floor(dates.length * 0.25)]);
-  const to = iso(dates[Math.floor(dates.length * 0.75)]);
+test('驗收④：設定時間範圍後，清單裡只剩該期間上傳的影片', async () => {
+  const to = new Date();
+  const from = new Date(to.getTime() - 120 * 24 * 60 * 60 * 1000);
+  const range = { from: isoDate(from), to: isoDate(to) };
 
-  const result = await collect(VIDEO_URL, { from, to });
-  const comments = flattenComments(result.results[0].threads);
-  report.push(`日期篩選（${from} ~ ${to}）：${result.comments} 則留言`);
-  assert.ok(comments.length > 0, '篩選後不該是空的');
-  assert.equal(comments.length, result.comments);
-  for (const c of comments) {
-    const at = new Date(c.publishedAt);
-    assert.ok(at >= dayStart(from) && at <= dayEnd(to), `${c.publishedText} 超出範圍：${c.publishedAt}`);
+  const { videos } = await listTargetVideos(CHANNEL_URL, range);
+  report.push(`上傳日期篩選（${range.from} ~ ${range.to}）：${videos.length} 支影片`);
+  assert.ok(videos.length > 0, '篩選後不該是空的');
+  assert.ok(videos.length < channelTotal, '篩選後應該比全部少');
+  for (const v of videos) {
+    assert.ok(v.publishedAt, `${v.title} 沒有精確上傳時間`);
+    const at = new Date(v.publishedAt);
+    assert.ok(at >= dayStart(range.from) && at <= dayEnd(range.to), `${v.title} 超出範圍：${v.publishedAt}`);
   }
-  // Markdown 也不該出現範圍外的留言
-  assert.ok(!result.results[0].markdown.includes('（沒有符合條件的留言）'));
+});
+
+test('驗收：一次超過 20 支影片會被擋下，要求分批', async () => {
+  const ids = Array.from({ length: MAX_VIDEOS + 1 }, (_, i) => `video${i}`);
+  await assert.rejects(() => collectComments(ids), /最多 20 支影片/);
 });
 
 test('驗收⑤：設定關鍵字後，每一則留言都含該關鍵字', async () => {
@@ -101,7 +110,7 @@ test('驗收⑤：設定關鍵字後，每一則留言都含該關鍵字', async
     .find((k) => all.filter((c) => c.text.includes(k)).length >= 3);
   assert.ok(keyword, '找不到適合的測試關鍵字');
 
-  const result = await collect(VIDEO_URL, { keyword });
+  const result = await collectComments([singleVideo.results[0].video.id], { keyword });
   const comments = flattenComments(result.results[0].threads);
   report.push(`關鍵字篩選（${keyword}）：${result.comments} 則留言`);
   assert.ok(comments.length > 0);
