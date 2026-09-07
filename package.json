@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "彙整 YouTube 播放清單／單支影片／頻道的留言，支援日期與關鍵字篩選，可匯出 Markdown",
+  "description": "彙整 YouTube 播放清單／單支影片／頻道的留言：依上傳日期列出影片、單次最多勾選 20 支，支援留言關鍵字篩選與 Markdown 匯出",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
