@@ -55,15 +55,46 @@ function video(id, href) {
   return { kind: 'video', id, url: href || `https://www.youtube.com/watch?v=${id}` };
 }
 
-function makeVideo(id, title, publishedText, channelName = '') {
-  return {
+// 列清單時看過的影片；第二階段只拿到影片 ID，靠這裡取回標題與縮圖，不必重抓
+const videoCache = new Map();
+
+function remember(video) {
+  videoCache.set(video.id, video);
+  return video;
+}
+
+function makeVideo(id, title, publishedText, channelName = '', publishedAt = null) {
+  return remember({
     id,
     title: title || '(無標題)',
     url: `https://www.youtube.com/watch?v=${id}`,
     thumbnail: `https://i.ytimg.com/vi/${id}/hqdefault.jpg`,
     publishedText: publishedText || '',
+    publishedAt,
     channelName
-  };
+  });
+}
+
+export function getCachedVideo(id) {
+  return videoCache.get(id) || null;
+}
+
+/**
+ * 取回單支影片的精確上傳時間（清單只有相對時間，Shorts 甚至沒有），順便補上標題與頻道名。
+ * @returns {Promise<object>} 更新後的影片物件，publishedAt 為 ISO 字串（取不到則為 null）
+ */
+export async function fetchVideoDetails(id) {
+  const yt = await getClient();
+  const info = await yt.getInfo(id);
+  const publishedAt = info.page?.[0]?.microformat?.publish_date || null;
+  const cached = videoCache.get(id);
+  return makeVideo(
+    id,
+    info.basic_info?.title || cached?.title,
+    publishedAt ? publishedAt.slice(0, 10) : (cached?.publishedText || info.primary_info?.published?.text),
+    info.basic_info?.channel?.name || cached?.channelName || '',
+    publishedAt
+  );
 }
 
 /** 清單項目有新舊兩種節點格式（LockupView / Video），統一轉成同一份資料 */
@@ -134,25 +165,19 @@ async function resolveChannelId(yt, input) {
 export async function listVideos(target, { limit = 0, onProgress } = {}) {
   const yt = await getClient();
   if (target.kind === 'video') {
-    const info = await yt.getInfo(target.id);
-    return [makeVideo(
-      target.id,
-      info.basic_info?.title,
-      info.primary_info?.published?.text,
-      info.basic_info?.channel?.name
-    )];
+    return [await fetchVideoDetails(target.id)];
   }
   if (target.kind === 'playlist') {
     const playlist = await yt.getPlaylist(target.id);
     const author = playlist.info?.author?.name;
     const videos = await collectPages(playlist, limit, onProgress);
-    return videos.map((v) => ({ ...v, channelName: v.channelName || author || '' }));
+    return videos.map((v) => remember({ ...v, channelName: v.channelName || author || '' }));
   }
   const channelId = await resolveChannelId(yt, target.id);
   const channel = await yt.getChannel(channelId);
   const videos = await collectChannelVideos(channel, limit, onProgress);
   const name = channel.metadata?.title || '';
-  return videos.map((v) => ({ ...v, channelName: v.channelName || name }));
+  return videos.map((v) => remember({ ...v, channelName: v.channelName || name }));
 }
 
 function normalizeComment(node, publishedNow) {
