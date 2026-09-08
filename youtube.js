@@ -118,9 +118,10 @@ function normalizeListItem(item) {
   return makeVideo(id, item.title?.text ?? String(item.title ?? ''), item.published?.text, item.author?.name);
 }
 
-async function collectPages(first, limit, onProgress, out = [], seen = new Set()) {
+async function collectPages(first, limit, onProgress, signal, out = [], seen = new Set()) {
   let page = first;
   while (page) {
+    if (signal?.aborted) break;
     for (const item of page.videos || []) {
       const v = normalizeListItem(item);
       if (!v || !VIDEO_ID.test(v.id) || seen.has(v.id)) continue;
@@ -136,13 +137,13 @@ async function collectPages(first, limit, onProgress, out = [], seen = new Set()
 }
 
 /** 頻道的長片與 Shorts 分屬不同分頁，兩個都算「影片」 */
-async function collectChannelVideos(channel, limit, onProgress) {
+async function collectChannelVideos(channel, limit, onProgress, signal) {
   const out = [];
   const seen = new Set();
-  await collectPages(await channel.getVideos(), limit, onProgress, out, seen);
+  await collectPages(await channel.getVideos(), limit, onProgress, signal, out, seen);
   if (!limit || out.length < limit) {
-    if (channel.has_shorts) {
-      await collectPages(await channel.getShorts(), limit, onProgress, out, seen);
+    if (channel.has_shorts && !signal?.aborted) {
+      await collectPages(await channel.getShorts(), limit, onProgress, signal, out, seen);
     }
   }
   return limit ? out.slice(0, limit) : out;
@@ -160,9 +161,9 @@ async function resolveChannelId(yt, input) {
 /**
  * 依 target 列出要處理的影片
  * @param {{kind:string,id:string}} target
- * @param {{limit?:number, onProgress?:(n:number)=>void}} options
+ * @param {{limit?:number, onProgress?:(n:number)=>void, signal?:AbortSignal}} options
  */
-export async function listVideos(target, { limit = 0, onProgress } = {}) {
+export async function listVideos(target, { limit = 0, onProgress, signal } = {}) {
   const yt = await getClient();
   if (target.kind === 'video') {
     return [await fetchVideoDetails(target.id)];
@@ -170,12 +171,12 @@ export async function listVideos(target, { limit = 0, onProgress } = {}) {
   if (target.kind === 'playlist') {
     const playlist = await yt.getPlaylist(target.id);
     const author = playlist.info?.author?.name;
-    const videos = await collectPages(playlist, limit, onProgress);
+    const videos = await collectPages(playlist, limit, onProgress, signal);
     return videos.map((v) => remember({ ...v, channelName: v.channelName || author || '' }));
   }
   const channelId = await resolveChannelId(yt, target.id);
   const channel = await yt.getChannel(channelId);
-  const videos = await collectChannelVideos(channel, limit, onProgress);
+  const videos = await collectChannelVideos(channel, limit, onProgress, signal);
   const name = channel.metadata?.title || '';
   return videos.map((v) => remember({ ...v, channelName: v.channelName || name }));
 }
@@ -212,7 +213,7 @@ function continuationEndpoint(node) {
  * YouTube 會把「回覆的回覆」再包一層 CommentThread，這裡一律攤平成同一層，
  * 與網頁上的呈現一致。
  */
-async function fetchReplies(yt, thread, publishedNow) {
+async function fetchReplies(yt, thread, publishedNow, signal) {
   const out = [];
   const seen = new Set();
   const pending = [thread];
@@ -227,6 +228,7 @@ async function fetchReplies(yt, thread, publishedNow) {
   };
 
   while (pending.length) {
+    if (signal?.aborted) break;
     const node = pending.shift();
     for (const child of replyNodes(node)) {
       if (child.type === 'CommentThread') take(child);
@@ -250,9 +252,9 @@ async function fetchReplies(yt, thread, publishedNow) {
 /**
  * 抓取單支影片的所有留言（含回覆）
  * @param {string} videoId
- * @param {{maxComments?:number, onProgress?:(n:number)=>void, now?:Date}} options
+ * @param {{maxComments?:number, onProgress?:(n:number)=>void, now?:Date, signal?:AbortSignal}} options
  */
-export async function fetchThreads(videoId, { maxComments = 0, onProgress, now = new Date() } = {}) {
+export async function fetchThreads(videoId, { maxComments = 0, onProgress, now = new Date(), signal } = {}) {
   const yt = await getClient();
   const publishedNow = (text) => {
     const d = relativeToDate(text, now);
@@ -268,7 +270,8 @@ export async function fetchThreads(videoId, { maxComments = 0, onProgress, now =
     for (const node of page.contents || []) {
       const thread = normalizeComment(node, publishedNow);
       if (!thread) continue;
-      if (node.has_replies) thread.replies = await fetchReplies(yt, node, publishedNow);
+      if (signal?.aborted) break outer;
+      if (node.has_replies) thread.replies = await fetchReplies(yt, node, publishedNow, signal);
       threads.push(thread);
       total += 1 + thread.replies.length;
       onProgress?.(total);

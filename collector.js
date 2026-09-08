@@ -12,11 +12,12 @@ const KIND_LABEL = { video: '單支影片', playlist: '播放清單', channel: '
  * 影片清單只給相對時間（"1mo ago"），頻道 Shorts 連時間都沒有，
  * 所以先用「可能區間」粗篩，再逐支取回精確上傳時間確認。
  */
-async function filterByUploadDate(videos, from, to, onEvent) {
+async function filterByUploadDate(videos, from, to, signal, onEvent) {
   const now = new Date();
   const candidates = videos.filter((v) => rangeOverlaps(relativeRange(v.publishedText, now), from, to));
   const kept = [];
   for (const [index, video] of candidates.entries()) {
+    if (signal?.aborted) break;
     onEvent({ type: 'resolving', done: index, total: candidates.length });
     try {
       const detailed = await fetchVideoDetails(video.id);
@@ -32,18 +33,19 @@ async function filterByUploadDate(videos, from, to, onEvent) {
 /**
  * 第一階段：列出網址底下、上傳時間落在範圍內的影片（不抓留言）
  * @param {string} url YouTube 影片 / 播放清單 / 頻道網址
- * @param {{from?:string,to?:string}} options 影片上傳時間範圍
+ * @param {{from?:string,to?:string,signal?:AbortSignal}} options 影片上傳時間範圍
  * @param {(event:object)=>void} [onEvent] 進度事件（target / listing / resolving / videos）
  */
 export async function listTargetVideos(url, options = {}, onEvent = () => {}) {
-  const { from = '', to = '' } = options;
+  const { from = '', to = '', signal } = options;
   const target = parseTarget(url);
   onEvent({ type: 'target', kind: target.kind, label: KIND_LABEL[target.kind] });
 
   const found = await listVideos(target, {
+    signal,
     onProgress: (n) => onEvent({ type: 'listing', found: n })
   });
-  const videos = (from || to) ? await filterByUploadDate(found, from, to, onEvent) : found;
+  const videos = (from || to) ? await filterByUploadDate(found, from, to, signal, onEvent) : found;
 
   onEvent({ type: 'videos', kind: target.kind, videos, scanned: found.length, max: MAX_VIDEOS });
   return { kind: target.kind, videos, scanned: found.length };
@@ -52,11 +54,11 @@ export async function listTargetVideos(url, options = {}, onEvent = () => {}) {
 /**
  * 第二階段：抓取選定影片的留言
  * @param {string[]} ids 影片 ID，最多 MAX_VIDEOS 支
- * @param {{keyword?:string,maxCommentsPerVideo?:number}} options
+ * @param {{keyword?:string,maxCommentsPerVideo?:number,signal?:AbortSignal}} options
  * @param {(event:object)=>void} [onEvent] 進度事件（video-start / comment-progress / video-done / video-error / done）
  */
 export async function collectComments(ids, options = {}, onEvent = () => {}) {
-  const { keyword = '', maxCommentsPerVideo = 0 } = options;
+  const { keyword = '', maxCommentsPerVideo = 0, signal } = options;
   if (!ids.length) throw new Error('請至少選擇一支影片');
   if (ids.length > MAX_VIDEOS) {
     throw new Error(`一次最多 ${MAX_VIDEOS} 支影片（目前 ${ids.length} 支），請分批執行`);
@@ -65,11 +67,13 @@ export async function collectComments(ids, options = {}, onEvent = () => {}) {
   const results = [];
   let comments = 0;
   for (const [index, id] of ids.entries()) {
+    if (signal?.aborted) break;
     const video = getCachedVideo(id) || await fetchVideoDetails(id);
     onEvent({ type: 'video-start', index, total: ids.length, video });
     try {
       const { threads, total: fetched } = await fetchThreads(id, {
         maxComments: maxCommentsPerVideo,
+        signal,
         onProgress: (n) => onEvent({ type: 'comment-progress', index, total: ids.length, fetched: n })
       });
       const filtered = filterThreads(threads, { keyword });
