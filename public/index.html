@@ -101,6 +101,8 @@
   /* ── 監看器 ───────────────────────────────────── */
   .monitor { display: grid; grid-template-columns: 288px 1fr; gap: 22px; margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--line-ink); }
   .monitor[hidden] { display: none; }
+  .monitor.no-screen { grid-template-columns: 1fr; }
+  .monitor.no-screen .screen { display: none; }
   .screen { position: relative; aspect-ratio: 16 / 9; background: var(--ink-2); border-radius: var(--radius); overflow: hidden; }
   .screen img { width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .45s ease; }
 
@@ -335,8 +337,8 @@ const num = (n) => Number(n).toLocaleString('en-US');
 function showScreen(url) {
   const img = $('screenImg');
   const next = new Image();
-  next.onload = () => { img.src = url; img.style.opacity = '1'; };
-  next.onerror = () => { img.style.opacity = '0'; };
+  next.onload = () => { img.src = url; img.style.opacity = '1'; $('monitor').classList.remove('no-screen'); };
+  next.onerror = () => { img.style.opacity = '0'; $('monitor').classList.add('no-screen'); };
   img.style.opacity = '0';
   next.src = url;
 }
@@ -642,6 +644,7 @@ function resetMonitor(label) {
   $('monitorLabel').textContent = label;
   $('trackBar').style.width = '0%';
   $('screenImg').style.opacity = '0';
+  $('monitor').classList.add('no-screen');   // 列出階段沒有「現正抓取的影片」可放
 }
 
 /* 第一階段：列出影片 */
