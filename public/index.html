@@ -84,6 +84,8 @@
   .btn-primary { background: var(--ember); color: #fff; font-weight: 500; }
   .btn-primary:hover:not(:disabled) { background: #ff7d61; }
   .btn-line { background: transparent; color: var(--on-ink); border-color: var(--line-ink); }
+  .btn-stop { background: transparent; color: var(--ember); border-color: var(--ember); font-weight: 500; }
+  .btn-stop:hover:not(:disabled) { background: rgba(242, 107, 78, .12); }
   .btn-line:hover:not(:disabled) { border-color: var(--on-ink-2); }
   button:disabled { opacity: .38; cursor: not-allowed; }
 
@@ -236,7 +238,6 @@
 
       <div class="run">
         <button type="submit" class="btn-primary" id="go">列出影片</button>
-        <button type="button" class="btn-line" id="stop" disabled>停止</button>
       </div>
     </form>
 
@@ -394,16 +395,38 @@ function renderGrid() {
 }
 
 function renderSheet() {
-  const selecting = state.phase === 'select';
   $('sheet').hidden = !state.videos.length;
-  $('pager').hidden = !selecting || pageCount() <= 1;
-  $('start').hidden = !selecting;
-  $('backToList').hidden = selecting || !state.videos.length;
   $('pageAt').textContent = `${state.page + 1} / ${pageCount()}`;
-  $('prevPage').disabled = state.page === 0;
-  $('nextPage').disabled = state.page >= pageCount() - 1;
+  syncControls();
   updateSheetHead();
   renderGrid();
+}
+
+/**
+ * 按鈕狀態一律由這裡決定：state.source 有值就代表有任務在跑。
+ * 執行中時「列出影片」「開始彙整」會就地變成停止鈕，其餘操作鎖住，避免開出第二條連線。
+ */
+function syncControls() {
+  const running = Boolean(state.source);
+  const selecting = state.phase === 'select';
+  const collecting = running && state.phase === 'collect';
+  deck.classList.toggle('is-running', running);
+
+  $('go').textContent = running && !collecting ? '停止列出' : '列出影片';
+  $('go').classList.toggle('btn-stop', running && !collecting);
+  $('go').disabled = collecting;
+
+  $('start').hidden = !(selecting || collecting);
+  $('start').textContent = collecting ? '停止彙整' : `開始彙整（${state.picked.size} 支）`;
+  $('start').classList.toggle('btn-stop', collecting);
+  $('start').disabled = !collecting && state.picked.size === 0;
+
+  $('backToList').hidden = selecting || !state.videos.length;
+  $('backToList').disabled = running;
+
+  $('pager').hidden = !selecting || pageCount() <= 1;
+  $('prevPage').disabled = running || state.page === 0;
+  $('nextPage').disabled = running || state.page >= pageCount() - 1;
 }
 
 function updateSheetHead() {
@@ -436,8 +459,7 @@ function syncPicks() {
     tile.setAttribute('aria-checked', on ? 'true' : 'false');
     tile.disabled = !on && full;
   }
-  $('start').disabled = state.picked.size === 0;
-  $('start').textContent = `開始彙整（${state.picked.size} 支）`;
+  syncControls();
   updateSheetHead();
 }
 
@@ -455,6 +477,7 @@ $('prevPage').addEventListener('click', () => { state.page = Math.max(0, state.p
 $('nextPage').addEventListener('click', () => { state.page = Math.min(pageCount() - 1, state.page + 1); renderSheet(); });
 
 $('backToList').addEventListener('click', () => {
+  if (state.source) return;
   state.phase = 'select';
   autoPick();
   renderSheet();
@@ -533,19 +556,18 @@ $('downloadAll').addEventListener('click', () => {
 });
 
 /* ── 執行 ───────────────────────────────── */
-function setRunning(running, label) {
-  deck.classList.toggle('is-running', running);
-  $('go').disabled = running;
-  $('go').textContent = running ? (label || '執行中…') : '列出影片';
-  $('stop').disabled = !running;
-  $('start').disabled = running || state.picked.size === 0;
-}
-
 function finish(label, text) {
-  setRunning(false);
+  if (state.source) { state.source.close(); state.source = null; }
   $('monitorLabel').textContent = label;
   $('monitorStat').innerHTML = text;
-  if (state.source) { state.source.close(); state.source = null; }
+  syncControls();
+}
+
+function stopRun() {
+  finish('已停止', state.phase === 'collect'
+    ? `完成 <b>${num(state.results.size)}</b> / ${state.batch.length} 支影片`
+    : '已停止列出影片');
+  setReadout('已停止');
 }
 
 function openStream(path, params, onEvent) {
@@ -567,16 +589,10 @@ function resetMonitor(label) {
   $('screenImg').style.opacity = '0';
 }
 
-$('stop').addEventListener('click', () => {
-  const done = state.phase === 'collect'
-    ? `完成 <b>${state.results.size}</b> / ${state.batch.length} 支影片`
-    : '已停止列出影片';
-  finish('已停止', done);
-});
-
 /* 第一階段：列出影片 */
 $('form').addEventListener('submit', (e) => {
   e.preventDefault();
+  if (state.source) { stopRun(); return; }   // 執行中時這顆是「停止列出」
   const url = $('url').value.trim();
   if (!url) { $('url').focus(); return; }
 
@@ -596,7 +612,6 @@ $('form').addEventListener('submit', (e) => {
   $('standby').hidden = false;
   $('downloadAll').disabled = true;
   resetMonitor('解析網址');
-  setRunning(true, '列出中…');
   setReadout('解析網址中');
 
   const params = new URLSearchParams({ url, from: $('from').value, to: $('to').value });
@@ -641,17 +656,17 @@ $('form').addEventListener('submit', (e) => {
       setReadout('停止');
     }
   });
+  syncControls();
 });
 
 /* 第二階段：彙整勾選的影片 */
 $('start').addEventListener('click', () => {
+  if (state.source) { stopRun(); return; }   // 執行中時這顆是「停止彙整」
   if (!state.picked.size) return;
   state.batch = state.videos.filter((v) => state.picked.has(v.id));
   state.phase = 'collect';
   state.pinned = false;
-  renderSheet();
   resetMonitor('準備中');
-  setRunning(true, '彙整中…');
   setReadout('開始彙整');
 
   const params = new URLSearchParams({
@@ -704,6 +719,7 @@ $('start').addEventListener('click', () => {
       updateSheetHead();
     }
   });
+  renderSheet();
 });
 </script>
 </body>
