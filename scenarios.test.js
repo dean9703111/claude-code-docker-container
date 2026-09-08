@@ -98,6 +98,22 @@ test('驗收④：設定時間範圍後，清單裡只剩該期間上傳的影�
   }
 });
 
+test('驗收：前端斷線（中止訊號）後，背景工作會停下來', async () => {
+  const abort = new AbortController();
+  setTimeout(() => abort.abort(), 800);
+
+  const started = Date.now();
+  const { videos } = await listTargetVideos(
+    CHANNEL_URL,
+    { from: '2020-01-01', to: isoDate(new Date()), signal: abort.signal }
+  );
+  const elapsed = Date.now() - started;
+  report.push(`中止測試：${elapsed}ms 後停下（未中止時整個頻道要逐支確認上傳日期）`);
+  // 不中止的話，這個範圍要為每支候選影片各發一次請求，遠不只幾秒
+  assert.ok(elapsed < 8000, `中止後仍跑了 ${elapsed}ms`);
+  assert.ok(videos.length < channelTotal, '中止後不該還把整個頻道跑完');
+});
+
 test('驗收：一次超過 20 支影片會被擋下，要求分批', async () => {
   const ids = Array.from({ length: MAX_VIDEOS + 1 }, (_, i) => `video${i}`);
   await assert.rejects(() => collectComments(ids), /最多 20 支影片/);
